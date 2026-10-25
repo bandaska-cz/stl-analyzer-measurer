@@ -4,10 +4,18 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type {
   CameraPreset,
   Measurement,
+  MeasureMode,
   ModelStats,
   RenderSettings,
 } from '../../types'
-import { getSnappedPoint } from '../../utils/meshCalculations'
+import {
+  getSnappedPoint,
+  measureWallThickness,
+  calculateFaceToFace,
+  calculateClosestPointsBetweenSegments,
+  type SnapInfo,
+  type EdgeSegment,
+} from '../../utils/meshCalculations'
 import { ViewGizmo } from './ViewGizmo'
 import { CanvasToolbar } from './CanvasToolbar'
 import { X } from 'lucide-react'
@@ -30,6 +38,12 @@ interface BBoxBadge {
   text: string
 }
 
+interface StartPointData {
+  point: THREE.Vector3
+  normal: THREE.Vector3
+  edge?: EdgeSegment
+}
+
 interface ThreeCanvasProps {
   geometry: THREE.BufferGeometry | null
   stats: ModelStats | null
@@ -42,6 +56,8 @@ interface ThreeCanvasProps {
   onDeleteMeasurement: (id: string) => void
   isMeasuringActive: boolean
   setIsMeasuringActive: (active: boolean) => void
+  measureMode: MeasureMode
+  setMeasureMode: (mode: MeasureMode) => void
 }
 
 export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
@@ -56,6 +72,8 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   onDeleteMeasurement,
   isMeasuringActive,
   setIsMeasuringActive,
+  measureMode,
+  setMeasureMode,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -77,11 +95,12 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
   const measurementsGroupRef = useRef<THREE.Group | null>(null)
   const liveGuideGroupRef = useRef<THREE.Group | null>(null)
   const snapIndicatorRef = useRef<THREE.Mesh | null>(null)
+  const hoverEdgeLineRef = useRef<THREE.Line | null>(null)
+  const startEdgeLineRef = useRef<THREE.Line | null>(null)
 
   // Interaction state
-  const [measureStartPoint, setMeasureStartPoint] = useState<THREE.Vector3 | null>(null)
-  const [hoverPoint, setHoverPoint] = useState<THREE.Vector3 | null>(null)
-  const [isSnapped, setIsSnapped] = useState<boolean>(false)
+  const [startPointData, setStartPointData] = useState<StartPointData | null>(null)
+  const [hoverSnap, setHoverSnap] = useState<SnapInfo | null>(null)
   const [mouseScreenPos, setMouseScreenPos] = useState<{ x: number; y: number } | null>(null)
 
   // Projected 2D badges for measurements & bounding box
@@ -104,7 +123,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     // Camera - Perspective
     const persp = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000)
     persp.position.set(120, -120, 100)
-    persp.up.set(0, 0, 1) // Z is UP (standard in 3D printing & CAD)
+    persp.up.set(0, 0, 1)
     cameraPerspRef.current = persp
 
     // Camera - Orthographic
@@ -163,14 +182,14 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     bottomFillLight.position.set(0, 0, -100)
     scene.add(bottomFillLight)
 
-    // Build Plate Grid (Custom sized for 3D printer bed)
+    // Build Plate Grid
     const grid = new THREE.GridHelper(settings.gridSize, settings.gridSize / 10, 0x4f46e5, 0x1e293b)
     grid.rotation.x = Math.PI / 2
-    grid.position.z = -0.01 // Just below Z=0
+    grid.position.z = -0.01
     scene.add(grid)
     gridHelperRef.current = grid
 
-    // Coordinate Axes Helper (X: Red, Y: Green, Z: Blue)
+    // Coordinate Axes Helper
     const axes = new THREE.AxesHelper(30)
     axes.position.set(-settings.gridSize / 2, -settings.gridSize / 2, 0)
     scene.add(axes)
@@ -185,19 +204,45 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     scene.add(liveGuideGroup)
     liveGuideGroupRef.current = liveGuideGroup
 
-    // Snapping indicator (Glowing sphere with outer ring)
+    // Snapping indicator (Glowing sphere)
     const snapSphereGeo = new THREE.SphereGeometry(1.2, 16, 16)
     const snapSphereMat = new THREE.MeshBasicMaterial({
       color: 0x10b981,
       depthTest: false,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.95,
     })
     const snapIndicator = new THREE.Mesh(snapSphereGeo, snapSphereMat)
     snapIndicator.renderOrder = 999
     snapIndicator.visible = false
     scene.add(snapIndicator)
     snapIndicatorRef.current = snapIndicator
+
+    // Hovered edge highlight line
+    const hoverEdgeGeo = new THREE.BufferGeometry()
+    const hoverEdgeMat = new THREE.LineBasicMaterial({
+      color: 0xf59e0b,
+      linewidth: 3,
+      depthTest: false,
+    })
+    const hoverEdgeLine = new THREE.Line(hoverEdgeGeo, hoverEdgeMat)
+    hoverEdgeLine.renderOrder = 998
+    hoverEdgeLine.visible = false
+    scene.add(hoverEdgeLine)
+    hoverEdgeLineRef.current = hoverEdgeLine
+
+    // Start edge highlight line
+    const startEdgeGeo = new THREE.BufferGeometry()
+    const startEdgeMat = new THREE.LineBasicMaterial({
+      color: 0x06b6d4,
+      linewidth: 3,
+      depthTest: false,
+    })
+    const startEdgeLine = new THREE.Line(startEdgeGeo, startEdgeMat)
+    startEdgeLine.renderOrder = 997
+    startEdgeLine.visible = false
+    scene.add(startEdgeLine)
+    startEdgeLineRef.current = startEdgeLine
 
     // Animation loop
     let animationFrameId: number
@@ -238,7 +283,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     }
   }, [])
 
-  // Camera projection toggle (Perspective vs Ortho)
+  // Camera projection toggle
   useEffect(() => {
     if (!cameraPerspRef.current || !cameraOrthoRef.current || !controlsRef.current) return
     const persp = cameraPerspRef.current
@@ -261,22 +306,17 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     controlsRef.current.update()
   }, [settings.orthographic])
 
-  // Update Grid & Axes when settings change
+  // Update Grid & Axes
   useEffect(() => {
-    if (gridHelperRef.current) {
-      gridHelperRef.current.visible = settings.showGrid
-    }
-    if (axesHelperRef.current) {
-      axesHelperRef.current.visible = settings.showAxes
-    }
+    if (gridHelperRef.current) gridHelperRef.current.visible = settings.showGrid
+    if (axesHelperRef.current) axesHelperRef.current.visible = settings.showAxes
   }, [settings.showGrid, settings.showAxes])
 
-  // Update Model Mesh & Material when geometry or render settings change
+  // Update Model Mesh & Material
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
 
-    // Clean up previous mesh
     if (modelMeshRef.current) {
       scene.remove(modelMeshRef.current)
       modelMeshRef.current.geometry.dispose()
@@ -306,19 +346,13 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
 
     if (!geometry) return
 
-    // Create materials based on renderMode
     let material: THREE.Material
     switch (settings.renderMode) {
       case 'wireframe':
-        material = new THREE.MeshBasicMaterial({
-          color: 0x60a5fa,
-          wireframe: true,
-        })
+        material = new THREE.MeshBasicMaterial({ color: 0x60a5fa, wireframe: true })
         break
       case 'matcap':
-        material = new THREE.MeshNormalMaterial({
-          flatShading: false,
-        })
+        material = new THREE.MeshNormalMaterial({ flatShading: false })
         break
       case 'xray':
         material = new THREE.MeshStandardMaterial({
@@ -332,9 +366,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         })
         break
       case 'normals':
-        material = new THREE.MeshNormalMaterial({
-          flatShading: true,
-        })
+        material = new THREE.MeshNormalMaterial({ flatShading: true })
         break
       case 'solid':
       case 'solid-wireframe':
@@ -355,7 +387,6 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     scene.add(mesh)
     modelMeshRef.current = mesh
 
-    // If solid-wireframe, add crisp edge highlights
     if (settings.renderMode === 'solid-wireframe') {
       const edgesGeo = new THREE.EdgesGeometry(geometry, 24)
       const edgesMat = new THREE.LineBasicMaterial({
@@ -369,7 +400,6 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       edgesLineRef.current = edges
     }
 
-    // Bounding Box Helper
     if (settings.showBoundingBox && stats) {
       geometry.computeBoundingBox()
       if (geometry.boundingBox) {
@@ -380,7 +410,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     }
   }, [geometry, settings.renderMode, settings.modelColor, settings.showBoundingBox, stats])
 
-  // Center camera on model when new geometry is loaded
+  // Center camera on model
   const resetCamera = useCallback(() => {
     if (!geometry || !activeCameraRef.current || !controlsRef.current) return
     geometry.computeBoundingBox()
@@ -401,7 +431,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     controlsRef.current.update()
   }, [geometry])
 
-  // Preset Views (Top, Front, Side, Iso)
+  // Preset Views
   const setCameraPreset = useCallback(
     (preset: CameraPreset) => {
       if (!geometry || !activeCameraRef.current || !controlsRef.current) return
@@ -446,12 +476,11 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     [geometry]
   )
 
-  // Re-render finished 3D measurements whenever `measurements` or `selectedMeasurementId` updates
+  // Re-render finished 3D measurements
   useEffect(() => {
     const group = measurementsGroupRef.current
     if (!group) return
 
-    // Clear previous measurement 3D objects
     while (group.children.length > 0) {
       const child = group.children[0]
       group.remove(child)
@@ -469,7 +498,6 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       const color = new THREE.Color(m.color)
       const highlightColor = isSelected ? 0xffffff : color.getHex()
 
-      // Endpoint spheres
       const sphereGeo = new THREE.SphereGeometry(isSelected ? 1.5 : 1.1, 16, 16)
       const sphereMat = new THREE.MeshBasicMaterial({
         color: highlightColor,
@@ -488,13 +516,11 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       sphere2.renderOrder = 900
       group.add(sphere2)
 
-      // Connecting 3D line / cylinder for high visibility
       const dist = p1.distanceTo(p2)
       if (dist > 0.001) {
         const dir = new THREE.Vector3().subVectors(p2, p1).normalize()
         const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5)
 
-        // Cylinder line
         const cylRadius = isSelected ? 0.6 : 0.35
         const cylGeo = new THREE.CylinderGeometry(cylRadius, cylRadius, dist, 8)
         const cylMat = new THREE.MeshBasicMaterial({
@@ -509,20 +535,13 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         cyl.renderOrder = 890
         group.add(cyl)
 
-        // Caliper end ticks (small crossbars at endpoints)
+        // Caliper end ticks
         const tickLength = 4
-        // Find vector perpendicular to direction
         const arbitrary = Math.abs(dir.z) < 0.99 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)
         const perp = new THREE.Vector3().crossVectors(dir, arbitrary).normalize().multiplyScalar(tickLength / 2)
 
-        const tickGeo1 = new THREE.BufferGeometry().setFromPoints([
-          p1.clone().add(perp),
-          p1.clone().sub(perp),
-        ])
-        const tickGeo2 = new THREE.BufferGeometry().setFromPoints([
-          p2.clone().add(perp),
-          p2.clone().sub(perp),
-        ])
+        const tickGeo1 = new THREE.BufferGeometry().setFromPoints([p1.clone().add(perp), p1.clone().sub(perp)])
+        const tickGeo2 = new THREE.BufferGeometry().setFromPoints([p2.clone().add(perp), p2.clone().sub(perp)])
         const tickMat = new THREE.LineBasicMaterial({
           color: highlightColor,
           depthTest: false,
@@ -535,11 +554,9 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         group.add(tickLine1)
         group.add(tickLine2)
 
-        // If selected: show orthogonal delta lines (delta X, delta Y, delta Z steps)
-        if (isSelected) {
+        if (isSelected && m.type === 'point-to-point') {
           const corner1 = new THREE.Vector3(p2.x, p1.y, p1.z)
           const corner2 = new THREE.Vector3(p2.x, p2.y, p1.z)
-
           const stepGeo = new THREE.BufferGeometry().setFromPoints([p1, corner1, corner2, p2])
           const stepMat = new THREE.LineDashedMaterial({
             color: 0xf59e0b,
@@ -556,7 +573,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     })
   }, [measurements, selectedMeasurementId])
 
-  // Live guide line when measuring in progress
+  // Live guide line when measuring
   useEffect(() => {
     const liveGroup = liveGuideGroupRef.current
     if (!liveGroup) return
@@ -569,41 +586,78 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       }
     }
 
-    if (isMeasuringActive && measureStartPoint && hoverPoint) {
-      // Dynamic dashed line from start to hover point
-      const lineGeo = new THREE.BufferGeometry().setFromPoints([measureStartPoint, hoverPoint])
-      const lineMat = new THREE.LineDashedMaterial({
-        color: 0x38bdf8,
-        dashSize: 2,
-        gapSize: 1,
-        depthTest: false,
-      })
-      const liveLine = new THREE.Line(lineGeo, lineMat)
-      liveLine.computeLineDistances()
-      liveLine.renderOrder = 950
-      liveGroup.add(liveLine)
+    if (!isMeasuringActive || !hoverSnap) return
 
-      // Start point sphere
+    // 1. Wall-Thickness mode live preview
+    if (measureMode === 'wall-thickness' && modelMeshRef.current) {
+      const thicknessResult = measureWallThickness(hoverSnap.point, hoverSnap.normal, modelMeshRef.current)
+      if (thicknessResult) {
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([hoverSnap.point, thicknessResult.endPoint])
+        const lineMat = new THREE.LineBasicMaterial({
+          color: 0x38bdf8,
+          depthTest: false,
+          linewidth: 2,
+        })
+        const liveLine = new THREE.Line(lineGeo, lineMat)
+        liveLine.renderOrder = 950
+        liveGroup.add(liveLine)
+
+        const endSphGeo = new THREE.SphereGeometry(1.2, 16, 16)
+        const endSphMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, depthTest: false })
+        const endSph = new THREE.Mesh(endSphGeo, endSphMat)
+        endSph.position.copy(thicknessResult.endPoint)
+        endSph.renderOrder = 960
+        liveGroup.add(endSph)
+      }
+    }
+
+    // 2. Point-to-Point, Face-to-Face, Edge-to-Edge with start point placed
+    if (startPointData) {
+      let targetPt = hoverSnap.point
+
+      if (measureMode === 'edge-to-edge' && startPointData.edge && hoverSnap.edge) {
+        const res = calculateClosestPointsBetweenSegments(
+          startPointData.edge.start,
+          startPointData.edge.end,
+          hoverSnap.edge.start,
+          hoverSnap.edge.end
+        )
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([res.closest1, res.closest2])
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xf59e0b, depthTest: false, linewidth: 2 })
+        const liveLine = new THREE.Line(lineGeo, lineMat)
+        liveLine.renderOrder = 950
+        liveGroup.add(liveLine)
+      } else {
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([startPointData.point, targetPt])
+        const lineMat = new THREE.LineDashedMaterial({
+          color: 0x38bdf8,
+          dashSize: 2,
+          gapSize: 1,
+          depthTest: false,
+        })
+        const liveLine = new THREE.Line(lineGeo, lineMat)
+        liveLine.computeLineDistances()
+        liveLine.renderOrder = 950
+        liveGroup.add(liveLine)
+      }
+
       const startSphereGeo = new THREE.SphereGeometry(1.4, 16, 16)
-      const startSphereMat = new THREE.MeshBasicMaterial({
-        color: 0x06b6d4,
-        depthTest: false,
-      })
+      const startSphereMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4, depthTest: false })
       const startSphere = new THREE.Mesh(startSphereGeo, startSphereMat)
-      startSphere.position.copy(measureStartPoint)
+      startSphere.position.copy(startPointData.point)
       startSphere.renderOrder = 960
       liveGroup.add(startSphere)
     }
-  }, [isMeasuringActive, measureStartPoint, hoverPoint])
+  }, [isMeasuringActive, measureMode, startPointData, hoverSnap])
 
-  // Project 3D positions to 2D screen coordinates on every animation/control change
+  // Project 3D badges to 2D screen coordinates
   const updateProjectedBadges = useCallback(() => {
     if (!containerRef.current || !activeCameraRef.current) return
     const width = containerRef.current.clientWidth
     const height = containerRef.current.clientHeight
     const camera = activeCameraRef.current
 
-    // Project finished measurements
+    // Finished measurements
     const badges: ProjectedBadge[] = []
     measurements.forEach((m) => {
       if (!m.visible) return
@@ -611,17 +665,25 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       const p2 = new THREE.Vector3(m.end.x, m.end.y, m.end.z)
       const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5)
 
-      // Check if in front of camera
       const projected = mid.clone().project(camera)
       if (projected.z < 1) {
         const sx = ((projected.x + 1) * width) / 2
         const sy = ((-projected.y + 1) * height) / 2
 
+        let label = `${m.distance.toFixed(2)} mm`
+        if (m.type === 'wall-thickness') {
+          label = `📐 Tloušťka: ${m.distance.toFixed(2)} mm`
+        } else if (m.type === 'face-to-face') {
+          label = `⬜ Stěny: ${(m.perpendicularDistance || m.distance).toFixed(2)} mm`
+        } else if (m.type === 'edge-to-edge') {
+          label = `📏 Hrany: ${m.distance.toFixed(2)} mm`
+        }
+
         badges.push({
           id: m.id,
           x: sx,
           y: sy,
-          text: `${m.distance.toFixed(2)} mm`,
+          text: label,
           subtext: m.name,
           color: m.color,
           isSelected: m.id === selectedMeasurementId,
@@ -630,23 +692,59 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     })
     setProjectedBadges(badges)
 
-    // Project live measurement if active
-    if (isMeasuringActive && measureStartPoint && hoverPoint) {
-      const mid = new THREE.Vector3().addVectors(measureStartPoint, hoverPoint).multiplyScalar(0.5)
-      const projected = mid.clone().project(camera)
-      if (projected.z < 1) {
-        const sx = ((projected.x + 1) * width) / 2
-        const sy = ((-projected.y + 1) * height) / 2
-        const dist = measureStartPoint.distanceTo(hoverPoint)
-        setLiveBadge({
-          id: 'live',
-          x: sx,
-          y: sy,
-          text: `${dist.toFixed(2)} mm`,
-          color: '#38bdf8',
-          isSelected: true,
-          isLive: true,
-        })
+    // Live measurement badge
+    if (isMeasuringActive && hoverSnap) {
+      if (measureMode === 'wall-thickness' && modelMeshRef.current) {
+        const res = measureWallThickness(hoverSnap.point, hoverSnap.normal, modelMeshRef.current)
+        if (res) {
+          const mid = new THREE.Vector3().addVectors(hoverSnap.point, res.endPoint).multiplyScalar(0.5)
+          const projected = mid.clone().project(camera)
+          if (projected.z < 1) {
+            setLiveBadge({
+              id: 'live',
+              x: ((projected.x + 1) * width) / 2,
+              y: ((-projected.y + 1) * height) / 2,
+              text: `📐 Tloušťka stěny: ${res.thickness.toFixed(2)} mm`,
+              color: '#38bdf8',
+              isSelected: true,
+              isLive: true,
+            })
+          }
+        } else {
+          setLiveBadge(null)
+        }
+      } else if (startPointData) {
+        let mid = new THREE.Vector3().addVectors(startPointData.point, hoverSnap.point).multiplyScalar(0.5)
+        let text = `${startPointData.point.distanceTo(hoverSnap.point).toFixed(2)} mm`
+
+        if (measureMode === 'face-to-face') {
+          const res = calculateFaceToFace(startPointData.point, startPointData.normal, hoverSnap.point, hoverSnap.normal)
+          text = `⬜ Kolmá vzdálenost: ${res.perpendicularDistance.toFixed(2)} mm (${res.isParallel ? 'Rovnoběžné' : res.angleDegrees.toFixed(1) + '°'})`
+        } else if (measureMode === 'edge-to-edge' && startPointData.edge && hoverSnap.edge) {
+          const res = calculateClosestPointsBetweenSegments(
+            startPointData.edge.start,
+            startPointData.edge.end,
+            hoverSnap.edge.start,
+            hoverSnap.edge.end
+          )
+          mid = new THREE.Vector3().addVectors(res.closest1, res.closest2).multiplyScalar(0.5)
+          text = `📏 Hrany: ${res.distance.toFixed(2)} mm (${res.isParallel ? 'Rovnoběžné' : res.angleDegrees.toFixed(1) + '°'})`
+        }
+
+        const projected = mid.clone().project(camera)
+        if (projected.z < 1) {
+          setLiveBadge({
+            id: 'live',
+            x: ((projected.x + 1) * width) / 2,
+            y: ((-projected.y + 1) * height) / 2,
+            text,
+            color: '#38bdf8',
+            isSelected: true,
+            isLive: true,
+          })
+        } else {
+          setLiveBadge(null)
+        }
       } else {
         setLiveBadge(null)
       }
@@ -654,13 +752,12 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       setLiveBadge(null)
     }
 
-    // Project Bounding Box Calipers if enabled
+    // Bounding Box Calipers
     if (settings.showBoxDimensions && stats) {
       const bBadges: BBoxBadge[] = []
       const min = stats.bbox.min
       const max = stats.bbox.max
 
-      // X dimension midpoint along front bottom edge [midX, minY, minZ]
       const midX = new THREE.Vector3((min.x + max.x) / 2, min.y, min.z).project(camera)
       if (midX.z < 1) {
         bBadges.push({
@@ -671,7 +768,6 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         })
       }
 
-      // Y dimension midpoint along side bottom edge [minX, midY, minZ]
       const midY = new THREE.Vector3(min.x, (min.y + max.y) / 2, min.z).project(camera)
       if (midY.z < 1) {
         bBadges.push({
@@ -682,7 +778,6 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         })
       }
 
-      // Z dimension midpoint along vertical corner edge [minX, minY, midZ]
       const midZ = new THREE.Vector3(min.x, min.y, (min.z + max.z) / 2).project(camera)
       if (midZ.z < 1) {
         bBadges.push({
@@ -700,13 +795,13 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     measurements,
     selectedMeasurementId,
     isMeasuringActive,
-    measureStartPoint,
-    hoverPoint,
+    measureMode,
+    startPointData,
+    hoverSnap,
     settings.showBoxDimensions,
     stats,
   ])
 
-  // Hook into requestAnimationFrame for smooth projected badges
   useEffect(() => {
     let animId: number
     const loop = () => {
@@ -717,10 +812,8 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     return () => cancelAnimationFrame(animId)
   }, [updateProjectedBadges])
 
-  // Handle Raycasting & Pointer Events for Precision Snapping
-  const raycastOnModel = (
-    e: React.PointerEvent<HTMLCanvasElement>
-  ): { point: THREE.Vector3; snapped: boolean } | null => {
+  // Raycasting & Snapping
+  const raycastOnModel = (e: React.PointerEvent<HTMLCanvasElement>): SnapInfo | null => {
     if (!canvasRef.current || !modelMeshRef.current || !activeCameraRef.current) return null
 
     const rect = canvasRef.current.getBoundingClientRect()
@@ -733,21 +826,18 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
     const intersects = raycaster.intersectObject(modelMeshRef.current, false)
     if (intersects.length > 0) {
       const hit = intersects[0]
-      if (settings.snapToVertex) {
-        const snapResult = getSnappedPoint(
-          hit,
-          activeCameraRef.current,
-          rect,
-          settings.snapTolerancePx
-        )
-        return { point: snapResult.point, snapped: snapResult.isSnapped }
-      }
-      return { point: hit.point.clone(), snapped: false }
+      const snapResult = getSnappedPoint(hit, activeCameraRef.current, rect, {
+        snapToVertex: settings.snapToVertex,
+        snapToEdge: measureMode === 'edge-to-edge' || settings.snapToEdge,
+        snapToFaceCenter: settings.snapToFaceCenter,
+        snapTolerancePx: settings.snapTolerancePx,
+      })
+      return snapResult
     }
     return null
   }
 
-  // Pointer move: update snap reticle & hover coordinates
+  // Pointer move
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current?.getBoundingClientRect()
     if (rect) {
@@ -756,69 +846,73 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
 
     if (!isMeasuringActive) {
       if (snapIndicatorRef.current) snapIndicatorRef.current.visible = false
-      setHoverPoint(null)
+      if (hoverEdgeLineRef.current) hoverEdgeLineRef.current.visible = false
+      setHoverSnap(null)
       return
     }
 
-    const hit = raycastOnModel(e)
-    if (hit) {
-      setHoverPoint(hit.point)
-      setIsSnapped(hit.snapped)
+    const snap = raycastOnModel(e)
+    if (snap) {
+      setHoverSnap(snap)
 
+      // Reticle position & color
       if (snapIndicatorRef.current) {
-        snapIndicatorRef.current.position.copy(hit.point)
+        snapIndicatorRef.current.position.copy(snap.point)
         snapIndicatorRef.current.visible = true
-        // Green if snapped to vertex, cyan if surface
-        ;(snapIndicatorRef.current.material as THREE.MeshBasicMaterial).color.setHex(
-          hit.snapped ? 0x10b981 : 0x06b6d4
-        )
+        let hex = 0x06b6d4 // Cyan for surface
+        if (snap.snapType === 'vertex') hex = 0x10b981 // Green for vertex
+        else if (snap.snapType === 'edge') hex = 0xf59e0b // Amber for edge
+        else if (snap.snapType === 'face-center') hex = 0xa855f7 // Purple for face center
+        ;(snapIndicatorRef.current.material as THREE.MeshBasicMaterial).color.setHex(hex)
+      }
+
+      // If snapped to an edge, highlight the edge segment
+      if (snap.edge && (snap.snapType === 'edge' || measureMode === 'edge-to-edge')) {
+        if (hoverEdgeLineRef.current) {
+          hoverEdgeLineRef.current.geometry.setFromPoints([snap.edge.start, snap.edge.end])
+          hoverEdgeLineRef.current.visible = true
+        }
+      } else {
+        if (hoverEdgeLineRef.current) hoverEdgeLineRef.current.visible = false
       }
     } else {
       if (snapIndicatorRef.current) snapIndicatorRef.current.visible = false
-      setHoverPoint(null)
+      if (hoverEdgeLineRef.current) hoverEdgeLineRef.current.visible = false
+      setHoverSnap(null)
     }
   }
 
-  // Pointer click: set start point or complete measurement
+  // Pointer down (Click to measure)
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    // Only handle primary left click for measuring
     if (e.button !== 0 || !isMeasuringActive) return
 
-    const hit = raycastOnModel(e)
-    if (!hit) return
+    const snap = raycastOnModel(e)
+    if (!snap) return
 
-    if (!measureStartPoint) {
-      // 1st click: establish start point
-      setMeasureStartPoint(hit.point)
-    } else {
-      // 2nd click: finish measurement!
-      const p1 = measureStartPoint
-      const p2 = hit.point
-      const distance = p1.distanceTo(p2)
+    const colorPalette = ['#06b6d4', '#f97316', '#10b981', '#8b5cf6', '#f43f5e', '#eab308', '#3b82f6']
+    const color = colorPalette[measurements.length % colorPalette.length]
 
-      if (distance > 0.01) {
-        const deltaX = Math.abs(p2.x - p1.x)
-        const deltaY = Math.abs(p2.y - p1.y)
-        const deltaZ = Math.abs(p2.z - p1.z)
+    // 1. Wall Thickness Mode (Instant 1-click measure)
+    if (measureMode === 'wall-thickness' && modelMeshRef.current) {
+      const res = measureWallThickness(snap.point, snap.normal, modelMeshRef.current)
+      if (res && res.thickness > 0.01) {
+        const deltaX = Math.abs(res.endPoint.x - snap.point.x)
+        const deltaY = Math.abs(res.endPoint.y - snap.point.y)
+        const deltaZ = Math.abs(res.endPoint.z - snap.point.z)
 
         const newMeasurement: Measurement = {
           id: `m-${Date.now()}`,
-          name: `Rozměr #${measurements.length + 1}`,
-          start: { x: p1.x, y: p1.y, z: p1.z },
-          end: { x: p2.x, y: p2.y, z: p2.z },
-          distance,
+          name: `Tloušťka stěny #${measurements.length + 1}`,
+          type: 'wall-thickness',
+          start: { x: snap.point.x, y: snap.point.y, z: snap.point.z },
+          end: { x: res.endPoint.x, y: res.endPoint.y, z: res.endPoint.z },
+          distance: res.thickness,
           deltaX,
           deltaY,
           deltaZ,
-          color: [
-            '#06b6d4',
-            '#f97316',
-            '#10b981',
-            '#8b5cf6',
-            '#f43f5e',
-            '#eab308',
-            '#3b82f6',
-          ][measurements.length % 7],
+          perpendicularDistance: res.thickness,
+          details: `Kolmá tloušťka stěny: ${res.thickness.toFixed(2)} mm`,
+          color,
           visible: true,
           createdAt: Date.now(),
         }
@@ -826,22 +920,128 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         onAddMeasurement(newMeasurement)
         onSelectMeasurement(newMeasurement.id)
       }
+      return
+    }
 
-      // Reset measuring start point
-      setMeasureStartPoint(null)
+    // 2. Multi-point modes (Point-to-Point, Face-to-Face, Edge-to-Edge)
+    if (!startPointData) {
+      // Step 1: establish start point
+      setStartPointData({
+        point: snap.point,
+        normal: snap.normal,
+        edge: snap.edge,
+      })
+
+      // If edge mode, highlight edge 1
+      if (snap.edge && startEdgeLineRef.current) {
+        startEdgeLineRef.current.geometry.setFromPoints([snap.edge.start, snap.edge.end])
+        startEdgeLineRef.current.visible = true
+      }
+    } else {
+      // Step 2: finish measurement!
+      const p1 = startPointData.point
+      const p2 = snap.point
+
+      if (measureMode === 'face-to-face') {
+        const res = calculateFaceToFace(startPointData.point, startPointData.normal, snap.point, snap.normal)
+        if (res.directDistance > 0.01) {
+          const newMeasurement: Measurement = {
+            id: `m-${Date.now()}`,
+            name: `Vzdálenost stěn #${measurements.length + 1}`,
+            type: 'face-to-face',
+            start: { x: p1.x, y: p1.y, z: p1.z },
+            end: { x: p2.x, y: p2.y, z: p2.z },
+            distance: res.directDistance,
+            deltaX: Math.abs(p2.x - p1.x),
+            deltaY: Math.abs(p2.y - p1.y),
+            deltaZ: Math.abs(p2.z - p1.z),
+            perpendicularDistance: res.perpendicularDistance,
+            angleDegrees: res.angleDegrees,
+            details: res.isParallel
+              ? `Rovnoběžné stěny (rozteč ${res.perpendicularDistance.toFixed(2)} mm)`
+              : `Úhel stěn: ${res.angleDegrees.toFixed(1)}° (kolmá vzdálenost: ${res.perpendicularDistance.toFixed(2)} mm)`,
+            color,
+            visible: true,
+            createdAt: Date.now(),
+          }
+          onAddMeasurement(newMeasurement)
+          onSelectMeasurement(newMeasurement.id)
+        }
+      } else if (measureMode === 'edge-to-edge' && startPointData.edge && snap.edge) {
+        const res = calculateClosestPointsBetweenSegments(
+          startPointData.edge.start,
+          startPointData.edge.end,
+          snap.edge.start,
+          snap.edge.end
+        )
+        if (res.distance > 0.001) {
+          const newMeasurement: Measurement = {
+            id: `m-${Date.now()}`,
+            name: `Vzdálenost hran #${measurements.length + 1}`,
+            type: 'edge-to-edge',
+            start: { x: res.closest1.x, y: res.closest1.y, z: res.closest1.z },
+            end: { x: res.closest2.x, y: res.closest2.y, z: res.closest2.z },
+            distance: res.distance,
+            deltaX: Math.abs(res.closest2.x - res.closest1.x),
+            deltaY: Math.abs(res.closest2.y - res.closest1.y),
+            deltaZ: Math.abs(res.closest2.z - res.closest1.z),
+            angleDegrees: res.angleDegrees,
+            details: res.isParallel
+              ? `Rovnoběžné hrany (rozteč ${res.distance.toFixed(2)} mm)`
+              : `Nejkratší vzdálenost hran (úhel ${res.angleDegrees.toFixed(1)}°)`,
+            color,
+            visible: true,
+            createdAt: Date.now(),
+          }
+          onAddMeasurement(newMeasurement)
+          onSelectMeasurement(newMeasurement.id)
+        }
+      } else {
+        // Point-to-Point
+        const distance = p1.distanceTo(p2)
+        if (distance > 0.01) {
+          const deltaX = Math.abs(p2.x - p1.x)
+          const deltaY = Math.abs(p2.y - p1.y)
+          const deltaZ = Math.abs(p2.z - p1.z)
+
+          const newMeasurement: Measurement = {
+            id: `m-${Date.now()}`,
+            name: `Rozměr #${measurements.length + 1}`,
+            type: 'point-to-point',
+            start: { x: p1.x, y: p1.y, z: p1.z },
+            end: { x: p2.x, y: p2.y, z: p2.z },
+            distance,
+            deltaX,
+            deltaY,
+            deltaZ,
+            color,
+            visible: true,
+            createdAt: Date.now(),
+          }
+
+          onAddMeasurement(newMeasurement)
+          onSelectMeasurement(newMeasurement.id)
+        }
+      }
+
+      setStartPointData(null)
+      if (startEdgeLineRef.current) startEdgeLineRef.current.visible = false
     }
   }
 
-  // Cancel measuring on Escape key
+  // Escape & M shortcut
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setMeasureStartPoint(null)
+        setStartPointData(null)
         setIsMeasuringActive(false)
         if (snapIndicatorRef.current) snapIndicatorRef.current.visible = false
+        if (hoverEdgeLineRef.current) hoverEdgeLineRef.current.visible = false
+        if (startEdgeLineRef.current) startEdgeLineRef.current.visible = false
       } else if (e.key === 'm' || e.key === 'M') {
         setIsMeasuringActive(!isMeasuringActive)
-        setMeasureStartPoint(null)
+        setStartPointData(null)
+        if (startEdgeLineRef.current) startEdgeLineRef.current.visible = false
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -853,7 +1053,6 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       ref={containerRef}
       className="relative w-full h-full select-none overflow-hidden bg-slate-950"
     >
-      {/* 3D WebGL Canvas */}
       <canvas
         ref={canvasRef}
         onPointerMove={handlePointerMove}
@@ -882,8 +1081,11 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         isMeasuringActive={isMeasuringActive}
         onToggleMeasure={() => {
           setIsMeasuringActive(!isMeasuringActive)
-          setMeasureStartPoint(null)
+          setStartPointData(null)
+          if (startEdgeLineRef.current) startEdgeLineRef.current.visible = false
         }}
+        measureMode={measureMode}
+        setMeasureMode={setMeasureMode}
       />
 
       {/* Live Active Measuring Status Banner */}
@@ -895,26 +1097,38 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
             </span>
             <span>
-              {!measureStartPoint ? (
+              {measureMode === 'wall-thickness' && (
                 <span>
-                  <strong>Krok 1/2:</strong> Klikněte na 1. bod na modelu{' '}
-                  {settings.snapToVertex && (
-                    <span className="text-emerald-400 font-medium">
-                      (vrcholy se magneticky přichytávají)
-                    </span>
-                  )}
+                  <strong>Režim tloušťky:</strong> Klikněte na stěnu pro okamžité změření kolmé tloušťky materiálu.
                 </span>
-              ) : (
+              )}
+              {measureMode === 'face-to-face' && (
                 <span>
-                  <strong>Krok 2/2:</strong> Klikněte na 2. koncový bod pro
-                  dokončení měření
+                  {!startPointData
+                    ? 'Krok 1/2: Klikněte na 1. stěnu / rovinu'
+                    : 'Krok 2/2: Klikněte na 2. stěnu pro zjištění kolmé vzdálenosti a úhlu'}
+                </span>
+              )}
+              {measureMode === 'edge-to-edge' && (
+                <span>
+                  {!startPointData
+                    ? 'Krok 1/2: Klikněte na 1. hranu modelu'
+                    : 'Krok 2/2: Klikněte na 2. hranu pro změření jejich rozteče / nejkratší vzdálenosti'}
+                </span>
+              )}
+              {measureMode === 'point-to-point' && (
+                <span>
+                  {!startPointData
+                    ? 'Krok 1/2: Klikněte na 1. bod na modelu (rohy a hrany se magneticky přichytávají)'
+                    : 'Krok 2/2: Klikněte na 2. koncový bod'}
                 </span>
               )}
             </span>
             <button
               onClick={() => {
-                setMeasureStartPoint(null)
+                setStartPointData(null)
                 setIsMeasuringActive(false)
+                if (startEdgeLineRef.current) startEdgeLineRef.current.visible = false
               }}
               className="ml-2 px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded text-[11px] transition-colors"
             >
@@ -925,7 +1139,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
       )}
 
       {/* Snap / Hover Tooltip near Cursor */}
-      {isMeasuringActive && hoverPoint && mouseScreenPos && (
+      {isMeasuringActive && hoverSnap && mouseScreenPos && (
         <div
           style={{
             transform: `translate(${mouseScreenPos.x + 14}px, ${
@@ -934,24 +1148,37 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
           }}
           className="absolute top-0 left-0 pointer-events-none z-30 bg-slate-900/90 backdrop-blur-sm border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] shadow-lg flex items-center gap-1.5"
         >
-          {isSnapped ? (
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-          ) : (
-            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+          {hoverSnap.snapType === 'vertex' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="text-[10px] text-emerald-400 font-semibold">Roh / Vrchol</span>
+            </>
           )}
-          <span className="font-mono text-slate-300">
-            [{hoverPoint.x.toFixed(1)}, {hoverPoint.y.toFixed(1)},{' '}
-            {hoverPoint.z.toFixed(1)}]
+          {hoverSnap.snapType === 'edge' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <span className="text-[10px] text-amber-400 font-semibold">Hrana</span>
+            </>
+          )}
+          {hoverSnap.snapType === 'face-center' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-purple-400" />
+              <span className="text-[10px] text-purple-400 font-semibold">Střed plochy</span>
+            </>
+          )}
+          {hoverSnap.snapType === 'surface' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+              <span className="text-[10px] text-cyan-400 font-semibold">Plocha stěny</span>
+            </>
+          )}
+          <span className="font-mono text-slate-400 text-[10px]">
+            [{hoverSnap.point.x.toFixed(1)}, {hoverSnap.point.y.toFixed(1)}, {hoverSnap.point.z.toFixed(1)}]
           </span>
-          {isSnapped && (
-            <span className="text-[10px] text-emerald-400 font-medium">
-              Vrchol
-            </span>
-          )}
         </div>
       )}
 
-      {/* 2D Projected Measurement Badges (Crisp vector UI overlay) */}
+      {/* 2D Projected Measurement Badges */}
       {projectedBadges.map((badge) => (
         <div
           key={badge.id}
@@ -1001,7 +1228,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
           className="absolute top-0 left-0 pointer-events-none z-30 animate-pulse"
         >
           <div className="px-3 py-1 rounded-full text-xs font-bold bg-cyan-500 text-slate-950 shadow-xl border border-cyan-300">
-            📏 {liveBadge.text}
+            {liveBadge.text}
           </div>
         </div>
       )}
@@ -1021,7 +1248,7 @@ export const ThreeCanvas: React.FC<ThreeCanvasProps> = ({
         </div>
       ))}
 
-      {/* Mouse navigation helper pill in bottom left */}
+      {/* Mouse navigation helper pill */}
       <div className="absolute bottom-3 left-4 z-10 pointer-events-none text-[11px] text-slate-400 bg-slate-900/70 backdrop-blur-sm px-2.5 py-1.5 rounded-lg border border-slate-800 hidden md:flex items-center gap-3">
         <span>🖱️ <strong>Rotace:</strong> Levý klik + táhnout</span>
         <span>•</span>

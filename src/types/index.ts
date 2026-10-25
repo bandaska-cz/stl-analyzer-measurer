@@ -4,15 +4,25 @@ export interface Vector3D {
   z: number
 }
 
+export type MeasureMode =
+  | 'point-to-point'
+  | 'wall-thickness'
+  | 'face-to-face'
+  | 'edge-to-edge'
+
 export interface Measurement {
   id: string
   name: string
+  type: MeasureMode
   start: Vector3D
   end: Vector3D
   distance: number
   deltaX: number
   deltaY: number
   deltaZ: number
+  perpendicularDistance?: number
+  angleDegrees?: number
+  details?: string
   color: string
   visible: boolean
   createdAt: number
@@ -52,6 +62,8 @@ export interface RenderSettings {
   showBoundingBox: boolean
   showBoxDimensions: boolean
   snapToVertex: boolean
+  snapToEdge: boolean
+  snapToFaceCenter: boolean
   snapTolerancePx: number
   orthographic: boolean
 }

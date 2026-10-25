@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import * as THREE from 'three'
-import type { Measurement, ModelStats, RenderSettings } from './types'
+import type { Measurement, MeasureMode, ModelStats, RenderSettings } from './types'
 import { Header } from './components/Header'
 import { ThreeCanvas } from './components/Viewport/ThreeCanvas'
 import { Tabs, type ActiveTab } from './components/Sidebar/Tabs'
@@ -25,6 +25,7 @@ export function App() {
   const [measurements, setMeasurements] = useState<Measurement[]>([])
   const [selectedMeasurementId, setSelectedMeasurementId] = useState<string | null>(null)
   const [isMeasuringActive, setIsMeasuringActive] = useState<boolean>(false)
+  const [measureMode, setMeasureMode] = useState<MeasureMode>('point-to-point')
 
   // Sidebar navigation
   const [activeTab, setActiveTab] = useState<ActiveTab>('measure')
@@ -46,6 +47,8 @@ export function App() {
     showBoundingBox: true,
     showBoxDimensions: false,
     snapToVertex: true,
+    snapToEdge: true,
+    snapToFaceCenter: false,
     snapTolerancePx: 20,
     orthographic: false,
   })
@@ -350,6 +353,8 @@ export function App() {
             onDeleteMeasurement={handleDeleteMeasurement}
             isMeasuringActive={isMeasuringActive}
             setIsMeasuringActive={setIsMeasuringActive}
+            measureMode={measureMode}
+            setMeasureMode={setMeasureMode}
           />
         </div>
 
@@ -378,6 +383,8 @@ export function App() {
                 settings={settings}
                 onChangeSettings={(st) => setSettings((prev) => ({ ...prev, ...st }))}
                 onScaleByMeasurement={handleScaleByMeasurement}
+                measureMode={measureMode}
+                setMeasureMode={setMeasureMode}
               />
             )}
 

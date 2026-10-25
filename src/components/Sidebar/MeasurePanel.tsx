@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { Measurement, RenderSettings } from '../../types'
+import type { Measurement, MeasureMode, RenderSettings } from '../../types'
 import {
   Ruler,
   Magnet,
@@ -9,6 +9,10 @@ import {
   Edit2,
   Check,
   Scale,
+  Layers,
+  Split,
+  Square,
+  Crosshair,
 } from 'lucide-react'
 
 interface MeasurePanelProps {
@@ -24,6 +28,8 @@ interface MeasurePanelProps {
   settings: RenderSettings
   onChangeSettings: (settings: Partial<RenderSettings>) => void
   onScaleByMeasurement: (measurementId: string, targetDistance: number) => void
+  measureMode: MeasureMode
+  setMeasureMode: (mode: MeasureMode) => void
 }
 
 export const MeasurePanel: React.FC<MeasurePanelProps> = ({
@@ -39,6 +45,8 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
   settings,
   onChangeSettings,
   onScaleByMeasurement,
+  measureMode,
+  setMeasureMode,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState<string>('')
@@ -59,7 +67,8 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
 
   const handleStartScale = (m: Measurement) => {
     setScalingId(m.id)
-    setTargetDimInput(m.distance.toFixed(2))
+    const currentDim = m.perpendicularDistance || m.distance
+    setTargetDimInput(currentDim.toFixed(2))
   }
 
   const handleApplyScale = (m: Measurement) => {
@@ -87,30 +96,138 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
             {isMeasuringActive ? 'Měření aktivní (Klikněte na model)' : 'Spustit pravítko (Klávesa M)'}
           </span>
         </button>
+      </div>
 
-        <p className="text-xs text-slate-400 px-1">
-          {isMeasuringActive
-            ? 'Kliknutím vyberte 1. a 2. bod na povrchu modelu. Klávesou Esc měření zrušíte.'
-            : 'Měřte vzdálenosti mezi dvěma libovolnými body nebo vrcholy s přesností na 0.01 mm.'}
-        </p>
+      {/* Measurement Mode Selector */}
+      <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex flex-col gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+          Způsob měření (Měřicí režim)
+        </span>
+
+        <div className="grid grid-cols-2 gap-1.5 text-xs">
+          {/* 1. Point to Point */}
+          <button
+            onClick={() => setMeasureMode('point-to-point')}
+            className={`p-2 rounded-lg border text-left flex flex-col gap-1 transition-all ${
+              measureMode === 'point-to-point'
+                ? 'bg-cyan-500/15 border-cyan-500/70 text-cyan-300 font-semibold'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Crosshair className="w-3.5 h-3.5" />
+              <span>Bod – Bod</span>
+            </div>
+            <span className="text-[10px] text-slate-500 font-normal leading-tight">
+              2 body (rohy, vrcholy, povrch)
+            </span>
+          </button>
+
+          {/* 2. Wall Thickness */}
+          <button
+            onClick={() => setMeasureMode('wall-thickness')}
+            className={`p-2 rounded-lg border text-left flex flex-col gap-1 transition-all ${
+              measureMode === 'wall-thickness'
+                ? 'bg-cyan-500/15 border-cyan-500/70 text-cyan-300 font-semibold'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5" />
+              <span>Tloušťka stěny</span>
+            </div>
+            <span className="text-[10px] text-slate-500 font-normal leading-tight">
+              1 klik: kolmý paprsek skrz stěnu
+            </span>
+          </button>
+
+          {/* 3. Face to Face */}
+          <button
+            onClick={() => setMeasureMode('face-to-face')}
+            className={`p-2 rounded-lg border text-left flex flex-col gap-1 transition-all ${
+              measureMode === 'face-to-face'
+                ? 'bg-cyan-500/15 border-cyan-500/70 text-cyan-300 font-semibold'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Square className="w-3.5 h-3.5" />
+              <span>Stěna – Stěna</span>
+            </div>
+            <span className="text-[10px] text-slate-500 font-normal leading-tight">
+              Kolmá vzdálenost a úhel dvou stěn
+            </span>
+          </button>
+
+          {/* 4. Edge to Edge */}
+          <button
+            onClick={() => setMeasureMode('edge-to-edge')}
+            className={`p-2 rounded-lg border text-left flex flex-col gap-1 transition-all ${
+              measureMode === 'edge-to-edge'
+                ? 'bg-cyan-500/15 border-cyan-500/70 text-cyan-300 font-semibold'
+                : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <Split className="w-3.5 h-3.5" />
+              <span>Hrana – Hrana</span>
+            </div>
+            <span className="text-[10px] text-slate-500 font-normal leading-tight">
+              Nejkratší vzdálenost a rozteč hran
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Snap Settings Card */}
       <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 flex flex-col gap-2.5">
-        <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-300 cursor-pointer">
-            <Magnet className="w-4 h-4 text-emerald-400" />
-            <span>Magnetické přichytávání k vrcholům</span>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+          <Magnet className="w-4 h-4 text-emerald-400" />
+          Magnetické přichytávání (Snapping)
+        </span>
+
+        <div className="flex flex-col gap-1.5 text-xs">
+          <label className="flex items-center justify-between text-slate-300 cursor-pointer">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+              Přichytávat k rohům / vrcholům (Vertex)
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.snapToVertex}
+              onChange={(e) => onChangeSettings({ snapToVertex: e.target.checked })}
+              className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
+            />
           </label>
-          <input
-            type="checkbox"
-            checked={settings.snapToVertex}
-            onChange={(e) => onChangeSettings({ snapToVertex: e.target.checked })}
-            className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
-          />
+
+          <label className="flex items-center justify-between text-slate-300 cursor-pointer">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+              Přichytávat k celým hranám (Edge)
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.snapToEdge}
+              onChange={(e) => onChangeSettings({ snapToEdge: e.target.checked })}
+              className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+            />
+          </label>
+
+          <label className="flex items-center justify-between text-slate-300 cursor-pointer">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-purple-400 inline-block" />
+              Přichytávat ke středům ploch (Face Center)
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.snapToFaceCenter}
+              onChange={(e) => onChangeSettings({ snapToFaceCenter: e.target.checked })}
+              className="w-4 h-4 accent-purple-500 rounded cursor-pointer"
+            />
+          </label>
         </div>
 
-        <div className="flex items-center justify-between pt-1 border-t border-slate-800 text-xs">
+        <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
           <span className="text-slate-400">Kóty ohraničení (X, Y, Z)</span>
           <button
             onClick={() => onChangeSettings({ showBoxDimensions: !settings.showBoxDimensions })}
@@ -144,8 +261,8 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
       {measurements.length === 0 ? (
         <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl bg-slate-900/40 text-slate-400 flex flex-col items-center gap-2">
           <Ruler className="w-8 h-8 text-slate-600" />
-          <p className="text-xs">
-            Zatím jste neprovedli žádné měření. Klikněte na <strong>Spustit pravítko</strong> výše a klikněte na 2 body na modelu.
+          <p className="text-xs leading-relaxed">
+            Zatím jste neprovedli žádné měření. Vyberte režim (např. <strong>Tloušťka stěny</strong> nebo <strong>Hrana–Hrana</strong>) a klikněte na <strong>Spustit pravítko</strong> výše.
           </p>
         </div>
       ) : (
@@ -196,9 +313,17 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                         </button>
                       </div>
                     ) : (
-                      <span className="text-xs font-semibold text-slate-200 truncate">
-                        {m.name}
-                      </span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-semibold text-slate-200 truncate">
+                          {m.name}
+                        </span>
+                        <span className="text-[10px] text-cyan-400 font-medium">
+                          {m.type === 'wall-thickness' && 'Tloušťka stěny'}
+                          {m.type === 'face-to-face' && 'Stěna – Stěna'}
+                          {m.type === 'edge-to-edge' && 'Hrana – Hrana'}
+                          {m.type === 'point-to-point' && 'Bod – Bod'}
+                        </span>
+                      </div>
                     )}
                   </div>
 
@@ -237,30 +362,47 @@ export const MeasurePanel: React.FC<MeasurePanelProps> = ({
                   </div>
                 </div>
 
-                {/* Main 3D Distance Display */}
+                {/* Main Distance Display */}
                 <div className="flex items-baseline justify-between">
                   <span className="text-xl font-bold font-mono tracking-tight text-white">
-                    {m.distance.toFixed(2)}{' '}
+                    {(m.perpendicularDistance || m.distance).toFixed(2)}{' '}
                     <span className="text-xs font-normal text-slate-400">mm</span>
                   </span>
-                  <span className="text-[11px] text-slate-400">Přímá vzdálenost</span>
+                  <span className="text-[11px] text-slate-400">
+                    {m.type === 'face-to-face'
+                      ? 'Kolmá vzdálenost'
+                      : m.type === 'wall-thickness'
+                      ? 'Tloušťka stěny'
+                      : m.type === 'edge-to-edge'
+                      ? 'Rozteč / vzdálenost'
+                      : 'Přímá vzdálenost'}
+                  </span>
                 </div>
 
+                {/* Sub-details (Angle, Parallel status, direct distance) */}
+                {m.details && (
+                  <div className="text-[11px] text-slate-300 bg-slate-950/40 px-2 py-1 rounded border border-slate-800/60 font-mono">
+                    {m.details}
+                  </div>
+                )}
+
                 {/* Delta XYZ Breakdown */}
-                <div className="grid grid-cols-3 gap-1 py-1.5 px-2 bg-slate-950/60 rounded-lg text-[11px] font-mono border border-slate-800/80">
-                  <div className="text-center">
-                    <span className="text-red-400">ΔX: </span>
-                    <span className="text-slate-200">{m.deltaX.toFixed(1)}</span>
+                {m.type === 'point-to-point' && (
+                  <div className="grid grid-cols-3 gap-1 py-1.5 px-2 bg-slate-950/60 rounded-lg text-[11px] font-mono border border-slate-800/80">
+                    <div className="text-center">
+                      <span className="text-red-400">ΔX: </span>
+                      <span className="text-slate-200">{m.deltaX.toFixed(1)}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-emerald-400">ΔY: </span>
+                      <span className="text-slate-200">{m.deltaY.toFixed(1)}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="text-blue-400">ΔZ: </span>
+                      <span className="text-slate-200">{m.deltaZ.toFixed(1)}</span>
+                    </div>
                   </div>
-                  <div className="text-center">
-                    <span className="text-emerald-400">ΔY: </span>
-                    <span className="text-slate-200">{m.deltaY.toFixed(1)}</span>
-                  </div>
-                  <div className="text-center">
-                    <span className="text-blue-400">ΔZ: </span>
-                    <span className="text-slate-200">{m.deltaZ.toFixed(1)}</span>
-                  </div>
-                </div>
+                )}
 
                 {/* Scale by measurement feature */}
                 {isScaling ? (

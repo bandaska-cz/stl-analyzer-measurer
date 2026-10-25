@@ -92,7 +92,11 @@ export function exportMeasurementReport(
       measurements: measurements.map((m) => ({
         id: m.id,
         name: m.name,
+        type: m.type,
         distanceMm: Number(m.distance.toFixed(3)),
+        perpendicularDistanceMm: m.perpendicularDistance ? Number(m.perpendicularDistance.toFixed(3)) : undefined,
+        angleDegrees: m.angleDegrees ? Number(m.angleDegrees.toFixed(2)) : undefined,
+        details: m.details,
         deltaX: Number(m.deltaX.toFixed(3)),
         deltaY: Number(m.deltaY.toFixed(3)),
         deltaZ: Number(m.deltaZ.toFixed(3)),
@@ -127,9 +131,9 @@ Celkem naměřeno rozměrů: ${measurements.length}
       content += `Žádné uložené měření.\n`
     } else {
       measurements.forEach((m, idx) => {
-        content += `\n[#${idx + 1}] ${m.name}
+        content += `\n[#${idx + 1}] ${m.name} (${m.type})
   Vzdálenost (3D):  ${formatMm(m.distance, 3)}
-  Projekce ΔX:      ${formatMm(m.deltaX, 3)}
+  ${m.perpendicularDistance !== undefined ? `Kolmá vzdálenost: ${formatMm(m.perpendicularDistance, 3)}\n  ` : ''}${m.details ? `Detail:            ${m.details}\n  ` : ''}Projekce ΔX:      ${formatMm(m.deltaX, 3)}
   Projekce ΔY:      ${formatMm(m.deltaY, 3)}
   Projekce ΔZ:      ${formatMm(m.deltaZ, 3)}
   Bod A:            [X: ${m.start.x.toFixed(2)}, Y: ${m.start.y.toFixed(2)}, Z: ${m.start.z.toFixed(2)}] mm

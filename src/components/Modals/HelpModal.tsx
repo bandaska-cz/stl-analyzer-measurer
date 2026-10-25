@@ -34,19 +34,31 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
 
         {/* Content */}
         <div className="flex flex-col gap-4 text-xs">
-          {/* Section 1: Measuring */}
+          {/* Section 1: Measuring Modes */}
           <div className="flex flex-col gap-1.5">
             <h3 className="font-bold text-cyan-400 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
               <Ruler className="w-3.5 h-3.5" />
-              1. Jak přesně měřit rozměry (Pravítko)
+              1. Režimy měření pravítka
             </h3>
-            <p className="text-slate-300 leading-relaxed">
-              Stiskněte tlačítko <strong>Spustit pravítko</strong> (nebo klávesu <code>M</code>). Kurzor se změní na nitkový kříž. Kliknutím na model zvolte <strong>první bod</strong>, poté přejeďte myší a klikněte na <strong>druhý bod</strong>. Vzdálenost se okamžitě spočítá a zobrazí se 3D kóta s přímou vzdáleností i rozpadem ΔX, ΔY, ΔZ.
-            </p>
-            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 flex items-center gap-2 text-slate-400">
+            <ul className="list-disc list-inside space-y-1 text-slate-300">
+              <li>
+                <strong>Bod – Bod</strong>: Měří přímou 3D vzdálenost i průměty ΔX, ΔY, ΔZ mezi libovolnými 2 body (rohy, vrcholy i plochou).
+              </li>
+              <li>
+                <strong>Tloušťka stěny (1 klik)</strong>: Kliknutím na stěnu aplikace vystřelí kolmý paprsek dovnitř skrz model a změří přesnou tloušťku materiálu k protější stěně.
+              </li>
+              <li>
+                <strong>Stěna – Stěna (2 kliky)</strong>: Kliknutím na 2 stěny spočítá kolmou normálovou vzdálenost mezi jejich rovinami a úhel mezi nimi (zda jsou rovnoběžné).
+              </li>
+              <li>
+                <strong>Hrana – Hrana (2 kliky)</strong>: Magneticky se přichytí k celým hranám a spočítá jejich nejkratší rozteč a rovnoběžnost.
+              </li>
+            </ul>
+
+            <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800 flex items-center gap-2 text-slate-400 mt-1">
               <Magnet className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>
-                <strong>Magnetické přichytávání:</strong> Při najetí blízko vrcholu nebo hrany se kurzor magneticky přichytí přesně k vrcholu trojúhelníkové sítě (zelený bod).
+                <strong>Magnetické přichytávání:</strong> Automaticky rozlišuje rohy/vrcholy (zelený bod), celé hrany (oranžový pruh) a plochy stěn (modrý bod).
               </span>
             </div>
           </div>
