@@ -44,7 +44,7 @@ export function App() {
     gridSize: 220, // 220 mm bed (standard 3D printer)
     showAxes: true,
     showBoundingBox: true,
-    showBoxDimensions: true,
+    showBoxDimensions: false,
     snapToVertex: true,
     snapTolerancePx: 20,
     orthographic: false,
@@ -78,27 +78,6 @@ export function App() {
       const def = SAMPLE_MODELS.find((m) => m.id === id) || SAMPLE_MODELS[0]
       const geo = def.createGeometry()
       setLoadedGeometry(geo, `${def.name}.stl`, 35000)
-
-      // Add demo measurement for the calibration cube
-      if (id === 'calibration-cube') {
-        setTimeout(() => {
-          const sampleMeasurement: Measurement = {
-            id: 'm-sample-1',
-            name: 'Hrana kalibrační kostky (X)',
-            start: { x: -10, y: -10, z: 20 },
-            end: { x: 10, y: -10, z: 20 },
-            distance: 20.0,
-            deltaX: 20.0,
-            deltaY: 0.0,
-            deltaZ: 0.0,
-            color: '#06b6d4',
-            visible: true,
-            createdAt: Date.now(),
-          }
-          setMeasurements([sampleMeasurement])
-          setSelectedMeasurementId(sampleMeasurement.id)
-        }, 100)
-      }
     },
     [setLoadedGeometry]
   )

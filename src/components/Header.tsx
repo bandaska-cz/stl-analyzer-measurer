@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState, useEffect } from 'react'
 import {
   Upload,
   Download,
@@ -29,6 +29,8 @@ export const Header: React.FC<HeaderProps> = ({
   stats,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [isSampleMenuOpen, setIsSampleMenuOpen] = useState<boolean>(false)
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -38,6 +40,34 @@ export const Header: React.FC<HeaderProps> = ({
       e.target.value = ''
     }
   }
+
+  // Handle closing sample menu on click outside or Escape
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsSampleMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsSampleMenuOpen(false)
+      }
+    }
+
+    if (isSampleMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener('keydown', handleKeyDown)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isSampleMenuOpen])
 
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-950/90 backdrop-blur-md px-4 flex items-center justify-between shrink-0 z-30">
@@ -86,32 +116,51 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="hidden sm:inline">Nahrát STL</span>
         </button>
 
-        {/* Sample Models Dropdown */}
-        <div className="relative group">
-          <button className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium border border-slate-700/60 transition-colors">
+        {/* Sample Models Dropdown (Click to toggle with outside click detection) */}
+        <div ref={dropdownRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setIsSampleMenuOpen((prev) => !prev)}
+            aria-expanded={isSampleMenuOpen}
+            aria-haspopup="true"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-colors ${
+              isSampleMenuOpen
+                ? 'bg-slate-700 text-white border-indigo-500/60 shadow-inner'
+                : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700/60'
+            }`}
+          >
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
             <span className="hidden md:inline">Ukázkové modely</span>
-            <ChevronDown className="w-3 h-3 text-slate-400" />
+            <ChevronDown
+              className={`w-3 h-3 text-slate-400 transition-transform duration-200 ${
+                isSampleMenuOpen ? 'rotate-180' : ''
+              }`}
+            />
           </button>
 
           {/* Dropdown Menu */}
-          <div className="absolute right-0 top-full mt-1.5 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 hidden group-hover:flex flex-col gap-1 z-50">
-            <div className="text-[10px] font-bold uppercase text-slate-400 px-2 py-1">
-              Vybrat testovací model
+          {isSampleMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 flex flex-col gap-1 z-50">
+              <div className="text-[10px] font-bold uppercase text-slate-400 px-2 py-1">
+                Vybrat testovací model
+              </div>
+              {SAMPLE_MODELS.map((model) => (
+                <button
+                  key={model.id}
+                  onClick={() => {
+                    onSelectSampleModel(model.id)
+                    setIsSampleMenuOpen(false)
+                  }}
+                  className="text-left px-2.5 py-2 hover:bg-slate-800 rounded-lg transition-colors flex flex-col text-slate-200"
+                >
+                  <span className="text-xs font-semibold text-white">{model.name}</span>
+                  <span className="text-[10px] text-slate-400 leading-tight">
+                    {model.description}
+                  </span>
+                </button>
+              ))}
             </div>
-            {SAMPLE_MODELS.map((model) => (
-              <button
-                key={model.id}
-                onClick={() => onSelectSampleModel(model.id)}
-                className="text-left px-2.5 py-2 hover:bg-slate-800 rounded-lg transition-colors flex flex-col"
-              >
-                <span className="text-xs font-semibold text-white">{model.name}</span>
-                <span className="text-[10px] text-slate-400 leading-tight">
-                  {model.description}
-                </span>
-              </button>
-            ))}
-          </div>
+          )}
         </div>
 
         <div className="h-5 w-px bg-slate-800 mx-1 hidden sm:block" />
@@ -150,4 +199,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   )
 }
-

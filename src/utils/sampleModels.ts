@@ -12,22 +12,12 @@ export const SAMPLE_MODELS: SampleModelDefinition[] = [
   {
     id: 'calibration-cube',
     name: 'Kalibrační kostka (20×20×20 mm)',
-    description: 'Přesná zkušební kostka se zkosenými hranami a výřezy pro ověření rozměrů',
+    description: 'Přesná testovací kostka s rozměry 20×20×20 mm pro ověření přesnosti měření',
     createGeometry: () => {
-      // Create a 20x20x20 cube with bevels / step features
-      const base = new THREE.BoxGeometry(20, 20, 20)
-      
-      // Let's create a stepped feature on top and a hole/emboss so there are interesting internal/external points
-      const step1 = new THREE.BoxGeometry(8, 8, 4)
-      step1.translate(0, 0, 11) // Top boss
-
-      const sideNodule = new THREE.CylinderGeometry(3, 3, 4, 16)
-      sideNodule.rotateZ(Math.PI / 2)
-      sideNodule.translate(11, 0, 0) // Side pin
-
-      const merged = BufferGeometryUtils.mergeGeometries([base, step1, sideNodule])
-      merged.computeVertexNormals()
-      return merged
+      // Clean, exact 20x20x20 mm calibration cube with segmented faces for easy vertex snapping
+      const geo = new THREE.BoxGeometry(20, 20, 20, 4, 4, 4)
+      geo.computeVertexNormals()
+      return geo
     },
   },
   {
